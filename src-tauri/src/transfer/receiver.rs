@@ -35,10 +35,17 @@ pub fn start_server(app: tauri::AppHandle) {
 
                                 let parts: Vec<&str> = payload.split('|').collect();
 
-                                if parts.len() == 2 {
-                                    let filename = parts[0].to_string();
+                                if parts.len() == 3 {
+                                    let transfer_id = parts[0].to_string();
 
-                                    let filesize = parts[1].parse::<u64>().unwrap_or(0);
+                                    let filename = parts[1].to_string();
+
+                                    let filesize = parts[2].parse::<u64>().unwrap_or(0);
+
+                                    println!(
+                                        "Offer received: {} {} {}",
+                                        transfer_id, filename, filesize
+                                    );
 
                                     crate::transfer::file_receiver::handle_file_offer(
                                         &app, filename, filesize,
