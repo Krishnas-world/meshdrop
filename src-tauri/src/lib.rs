@@ -1,73 +1,41 @@
-use std::io::Read;
-use std::net::TcpListener;
-use std::thread;
-use std::net::TcpStream;
-use std::io::Write;
-
+mod transfer;
+use transfer::file_response_sender;
+use transfer::file_sender;
+use transfer::receiver;
+use transfer::sender;
 #[tauri::command]
-fn start_server() {
-    thread::spawn(|| {
-        let listener = match TcpListener::bind("0.0.0.0:7878") {
-            Ok(listener) => listener,
-            Err(e) => {
-                println!("Could not start server: {}", e);
-                return;
-            }
-        };
-
-        println!("Server running on port 7878");
-
-        for stream in listener.incoming() {
-            match stream {
-                Ok(mut stream) => {
-                    println!("New connection!");
-
-                    let mut buffer = [0; 1024];
-
-                    match stream.read(&mut buffer) {
-                        Ok(bytes_read) => {
-                            let message = String::from_utf8_lossy(&buffer[..bytes_read]);
-
-                            println!("Received: {}", message);
-                        }
-
-                        Err(e) => {
-                            println!("Read error: {}", e);
-                        }
-                    }
-                }
-
-                Err(e) => {
-                    println!("Connection failed: {}", e);
-                }
-            }
-        }
-    });
+fn start_server(app: tauri::AppHandle) {
+    receiver::start_server(app);
 }
 
 #[tauri::command]
 fn send_message(ip: String, message: String) {
-
-    match TcpStream::connect(format!("{}:7878", ip)) {
-
-        Ok(mut stream) => {
-
-            stream.write_all(message.as_bytes())
-                .expect("Failed to send");
-
-            println!("Message sent");
-        }
-
-        Err(e) => {
-            println!("Connection failed: {}", e);
-        }
-    }
+    sender::send_message(ip, message);
+}
+#[tauri::command]
+fn send_file_offer(ip: String, filename: String, filesize: u64) {
+    file_sender::send_file_offer(ip, filename, filesize);
 }
 
+#[tauri::command]
+fn send_file_accept(ip: String) {
+    file_response_sender::send_file_accept(ip);
+}
+
+#[tauri::command]
+fn send_file_reject(ip: String) {
+    file_response_sender::send_file_reject(ip);
+}
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![start_server, send_message])
+        .invoke_handler(tauri::generate_handler![
+            start_server,
+            send_message,
+            send_file_offer,
+            send_file_accept,
+            send_file_reject
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
