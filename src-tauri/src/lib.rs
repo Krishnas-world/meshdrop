@@ -14,8 +14,8 @@ fn send_message(ip: String, message: String) {
     sender::send_message(ip, message);
 }
 #[tauri::command]
-fn send_file_offer(ip: String, filename: String, filesize: u64) {
-    file_sender::send_file_offer(ip, filename, filesize);
+fn send_file_offer(ip: String, filename: String, filesize: u64) -> Result<String, String> {
+    file_sender::send_file_offer(ip, filename, filesize).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -31,23 +31,33 @@ fn get_file_info(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn send_file_data(ip: String, filename: String, bytes: Vec<u8>) -> Result<(), String> {
-    file_sender::send_file_data(ip, filename, bytes).map_err(|e| e.to_string())
+fn send_file_data(
+    ip: String,
+    transfer_id: String,
+    filename: String,
+    bytes: Vec<u8>,
+) -> Result<(), String> {
+    file_sender::send_file_data(ip, transfer_id, filename, bytes).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn send_file_from_path(app: tauri::AppHandle, ip: String, path: String) -> Result<(), String> {
-    file_sender::send_file_from_path(app, ip, path).map_err(|e| e.to_string())
+fn send_file_from_path(
+    app: tauri::AppHandle,
+    ip: String,
+    transfer_id: String,
+    path: String,
+) -> Result<(), String> {
+    file_sender::send_file_from_path(app, ip, transfer_id, path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn send_file_accept(ip: String) {
-    file_response_sender::send_file_accept(ip);
+fn send_file_accept(ip: String, transfer_id: String) {
+    file_response_sender::send_file_accept(ip, transfer_id);
 }
 
 #[tauri::command]
-fn send_file_reject(ip: String) {
-    file_response_sender::send_file_reject(ip);
+fn send_file_reject(ip: String, transfer_id: String) {
+    file_response_sender::send_file_reject(ip, transfer_id);
 }
 
 #[tauri::command]

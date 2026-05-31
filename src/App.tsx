@@ -10,13 +10,14 @@ import { TransferActivity } from "./components/TransferActivity";
 import type { ActivityItem, IncomingFile } from "./types";
 
 function parseIncomingFile(payload: string): IncomingFile | null {
-  const [name, size] = payload.split("|");
+  const [id, name, size] = payload.split("|");
 
-  if (!name || !size) {
+  if (!id || !name || !size) {
     return null;
   }
 
   return {
+    id,
     name,
     size: Number(size),
     raw: payload,
@@ -29,6 +30,7 @@ function App() {
   const [incomingFile, setIncomingFile] = useState<IncomingFile | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedFilePath, setSelectedFilePath] = useState("");
+  const [outgoingTransferId, setOutgoingTransferId] = useState("");
   const [receiveFolder, setReceiveFolder] = useState("");
   const [serverStatus, setServerStatus] = useState<"idle" | "online" | "error">("idle");
   const [transferStatus, setTransferStatus] = useState("Ready for nearby transfers");
@@ -36,6 +38,8 @@ function App() {
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const selectedFileRef = useRef<File | null>(null);
   const selectedFilePathRef = useRef("");
+  const outgoingTransferIdRef = useRef("");
+  const incomingTransferIdRef = useRef("");
   const ipRef = useRef("");
 
   const needsFilePath = Boolean(selectedFile && selectedFile.size > 25 * 1024 * 1024);
@@ -80,6 +84,10 @@ function App() {
   }, [selectedFilePath]);
 
   useEffect(() => {
+    outgoingTransferIdRef.current = outgoingTransferId;
+  }, [outgoingTransferId]);
+
+  useEffect(() => {
     ipRef.current = ip;
   }, [ip]);
 
@@ -104,6 +112,7 @@ function App() {
       setProgress(10);
 
       if (file) {
+        incomingTransferIdRef.current = file.id;
         addActivity({
           title: `Incoming ${file.name}`,
           detail: "Waiting for your response",
@@ -112,10 +121,16 @@ function App() {
       }
     });
 
-    const unlistenAccepted = listen("file-accepted", async () => {
+    const unlistenAccepted = listen<string>("file-accepted", async (event) => {
+      const acceptedTransferId = event.payload;
       const file = selectedFileRef.current;
       const filePath = selectedFilePathRef.current.trim();
+      const transferId = outgoingTransferIdRef.current;
       const targetIp = ipRef.current.trim();
+
+      if (acceptedTransferId !== transferId) {
+        return;
+      }
 
       if (!file || !targetIp) {
         setTransferStatus("Receiver accepted, but no selected file is ready.");
@@ -130,6 +145,7 @@ function App() {
         if (filePath) {
           await invoke("send_file_from_path", {
             ip: targetIp,
+            transferId,
             path: filePath,
           });
         } else if (file.size <= 25 * 1024 * 1024) {
@@ -137,6 +153,7 @@ function App() {
 
           await invoke("send_file_data", {
             ip: targetIp,
+            transferId,
             filename: file.name,
             bytes,
           });
@@ -148,6 +165,8 @@ function App() {
 
         setProgress(100);
         setTransferStatus(`Sent ${file.name}`);
+        setOutgoingTransferId("");
+        outgoingTransferIdRef.current = "";
         addActivity({
           title: `Sent ${file.name}`,
           detail: `${file.size.toLocaleString()} bytes to ${targetIp}`,
@@ -165,8 +184,14 @@ function App() {
       }
     });
 
-    const unlistenRejected = listen("file-rejected", () => {
+    const unlistenRejected = listen<string>("file-rejected", (event) => {
+      if (event.payload !== outgoingTransferIdRef.current) {
+        return;
+      }
+
       setTransferStatus("Receiver rejected the file");
+      setOutgoingTransferId("");
+      outgoingTransferIdRef.current = "";
       setProgress(0);
       addActivity({
         title: "Transfer rejected",
@@ -176,23 +201,37 @@ function App() {
     });
 
     const unlistenFileReceived = listen<string>("file-received", (event) => {
+      const [transferId, path] = event.payload.split("|");
+      if (incomingTransferIdRef.current && transferId !== incomingTransferIdRef.current) {
+        return;
+      }
+
       setProgress(100);
-      setTransferStatus(`Saved to ${event.payload}`);
+      setTransferStatus(`Saved to ${path}`);
       addActivity({
         title: "File received",
-        detail: event.payload,
+        detail: path,
         status: "done",
       });
+      incomingTransferIdRef.current = "";
     });
 
     const unlistenSendProgress = listen<string>("file-send-progress", (event) => {
-      const [name, sent, total, percent] = event.payload.split("|");
+      const [transferId, name, sent, total, percent] = event.payload.split("|");
+      if (transferId !== outgoingTransferIdRef.current) {
+        return;
+      }
+
       setProgress(Number(percent));
       setTransferStatus(`Sending ${name}: ${Number(sent).toLocaleString()} / ${Number(total).toLocaleString()} bytes`);
     });
 
     const unlistenReceiveProgress = listen<string>("file-receive-progress", (event) => {
-      const [name, received, total, percent] = event.payload.split("|");
+      const [transferId, name, received, total, percent] = event.payload.split("|");
+      if (incomingTransferIdRef.current && transferId !== incomingTransferIdRef.current) {
+        return;
+      }
+
       setProgress(Number(percent));
       setTransferStatus(`Receiving ${name}: ${Number(received).toLocaleString()} / ${Number(total).toLocaleString()} bytes`);
     });
@@ -255,12 +294,14 @@ function App() {
     }
 
     try {
-      await invoke("send_file_offer", {
+      const transferId = await invoke<string>("send_file_offer", {
         ip,
         filename: selectedFile.name,
         filesize: selectedFile.size,
       });
 
+      setOutgoingTransferId(transferId);
+      outgoingTransferIdRef.current = transferId;
       setProgress(15);
       setTransferStatus(`Offer sent for ${selectedFile.name}`);
       addActivity({
@@ -289,9 +330,11 @@ function App() {
           });
 
       setReceiveFolder(savedFolder);
+      incomingTransferIdRef.current = incomingFile.id;
 
       await invoke("send_file_accept", {
         ip,
+        transferId: incomingFile.id,
       });
 
       setIncomingFile(null);
@@ -304,12 +347,18 @@ function App() {
   }
 
   async function rejectFile() {
+    if (!incomingFile) {
+      return;
+    }
+
     try {
       await invoke("send_file_reject", {
         ip,
+        transferId: incomingFile.id,
       });
 
       setIncomingFile(null);
+      incomingTransferIdRef.current = "";
       setProgress(0);
       setTransferStatus("File rejected");
     } catch (error) {

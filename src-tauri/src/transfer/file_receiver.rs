@@ -1,3 +1,4 @@
+use super::session::{sessions, TransferSession};
 use std::fs::{self, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -57,8 +58,18 @@ pub fn set_receive_location(path: String) -> std::io::Result<String> {
     set_receive_folder(location.join("MeshDrop").to_string_lossy().to_string())
 }
 
-pub fn handle_file_offer(app: &AppHandle, filename: String, filesize: u64) {
-    let payload = format!("{}|{}", filename, filesize);
+pub fn handle_file_offer(app: &AppHandle, transfer_id: String, filename: String, filesize: u64) {
+    sessions().lock().unwrap().insert(
+        transfer_id.clone(),
+        TransferSession {
+            id: transfer_id.clone(),
+            file_name: filename.clone(),
+            file_size: filesize,
+            file_path: String::new(),
+        },
+    );
+
+    let payload = format!("{}|{}|{}", transfer_id, filename, filesize);
 
     let _ = app.emit("incoming-file-offer", payload);
 }
@@ -104,15 +115,28 @@ pub fn handle_file_data(app: &AppHandle, payload: &[u8]) -> std::io::Result<Path
 }
 
 fn handle_file_chunk(app: &AppHandle, payload: &[u8]) -> std::io::Result<PathBuf> {
-    if payload.len() < 4 + 2 + 8 + 8 {
+    if payload.len() < 4 + 2 + 2 + 8 + 8 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "Chunk payload is too small",
         ));
     }
 
-    let filename_len = u16::from_be_bytes([payload[4], payload[5]]) as usize;
-    let total_start = 6 + filename_len;
+    let transfer_id_len = u16::from_be_bytes([payload[4], payload[5]]) as usize;
+    let filename_len_start = 6 + transfer_id_len;
+
+    if payload.len() < filename_len_start + 2 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Chunk payload is missing transfer ID",
+        ));
+    }
+
+    let transfer_id = String::from_utf8_lossy(&payload[6..filename_len_start]).to_string();
+    let filename_len =
+        u16::from_be_bytes([payload[filename_len_start], payload[filename_len_start + 1]]) as usize;
+    let filename_start = filename_len_start + 2;
+    let total_start = filename_start + filename_len;
     let offset_start = total_start + 8;
     let data_start = offset_start + 8;
 
@@ -123,7 +147,7 @@ fn handle_file_chunk(app: &AppHandle, payload: &[u8]) -> std::io::Result<PathBuf
         ));
     }
 
-    let filename = String::from_utf8_lossy(&payload[6..total_start]).to_string();
+    let filename = String::from_utf8_lossy(&payload[filename_start..total_start]).to_string();
     let safe_filename = Path::new(&filename)
         .file_name()
         .and_then(|name| name.to_str())
@@ -145,6 +169,7 @@ fn handle_file_chunk(app: &AppHandle, payload: &[u8]) -> std::io::Result<PathBuf
     fs::create_dir_all(&folder)?;
 
     let path = folder.join(safe_filename);
+    let path_string = path.to_string_lossy().to_string();
     let mut file = OpenOptions::new()
         .create(true)
         .write(true)
@@ -163,11 +188,18 @@ fn handle_file_chunk(app: &AppHandle, payload: &[u8]) -> std::io::Result<PathBuf
 
     let _ = app.emit(
         "file-receive-progress",
-        format!("{}|{}|{}|{}", safe_filename, received, total_size, percent),
+        format!(
+            "{}|{}|{}|{}|{}",
+            transfer_id, safe_filename, received, total_size, percent
+        ),
     );
 
     if received >= total_size {
-        let _ = app.emit("file-received", path.to_string_lossy().to_string());
+        if let Some(session) = sessions().lock().unwrap().get_mut(&transfer_id) {
+            session.file_path = path_string.clone();
+        }
+
+        let _ = app.emit("file-received", format!("{}|{}", transfer_id, path_string));
     }
 
     Ok(path)

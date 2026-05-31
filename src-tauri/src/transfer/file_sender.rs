@@ -13,7 +13,7 @@ use super::session::{sessions, TransferSession};
 const CHUNK_SIZE: usize = 512 * 1024;
 const CHUNK_MAGIC: &[u8; 4] = b"MDC1";
 
-pub fn send_file_offer(ip: String, filename: String, filesize: u64) {
+pub fn send_file_offer(ip: String, filename: String, filesize: u64) -> std::io::Result<String> {
     let transfer_id = Uuid::new_v4().to_string();
 
     let session = TransferSession {
@@ -28,23 +28,24 @@ pub fn send_file_offer(ip: String, filename: String, filesize: u64) {
         .unwrap()
         .insert(transfer_id.clone(), session);
 
-    match TcpStream::connect(format!("{}:7878", ip)) {
-        Ok(mut stream) => {
-            let payload = format!("{}|{}|{}", transfer_id, filename, filesize);
+    let mut stream = TcpStream::connect(format!("{}:7878", ip))?;
+    let payload = format!("{}|{}|{}", transfer_id, filename, filesize);
 
-            let _ = write_packet(&mut stream, PacketType::FileOffer, payload.as_bytes());
+    write_packet(&mut stream, PacketType::FileOffer, payload.as_bytes())?;
 
-            println!("Offer sent: {}", payload);
-        }
+    println!("Offer sent: {}", payload);
 
-        Err(e) => {
-            println!("{}", e);
-        }
-    }
+    Ok(transfer_id)
 }
 
-pub fn send_file_data(ip: String, filename: String, bytes: Vec<u8>) -> std::io::Result<()> {
+pub fn send_file_data(
+    ip: String,
+    transfer_id: String,
+    filename: String,
+    bytes: Vec<u8>,
+) -> std::io::Result<()> {
     let filename_bytes = filename.as_bytes();
+    let transfer_id_bytes = transfer_id.as_bytes();
 
     if filename_bytes.len() > u16::MAX as usize {
         return Err(std::io::Error::new(
@@ -53,9 +54,23 @@ pub fn send_file_data(ip: String, filename: String, bytes: Vec<u8>) -> std::io::
         ));
     }
 
-    let mut payload = Vec::with_capacity(2 + filename_bytes.len() + bytes.len());
+    if transfer_id_bytes.len() > u16::MAX as usize {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Transfer ID is too long",
+        ));
+    }
+
+    let mut payload = Vec::with_capacity(
+        4 + 2 + transfer_id_bytes.len() + 2 + filename_bytes.len() + bytes.len(),
+    );
+    payload.extend_from_slice(CHUNK_MAGIC);
+    payload.extend_from_slice(&(transfer_id_bytes.len() as u16).to_be_bytes());
+    payload.extend_from_slice(transfer_id_bytes);
     payload.extend_from_slice(&(filename_bytes.len() as u16).to_be_bytes());
     payload.extend_from_slice(filename_bytes);
+    payload.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
+    payload.extend_from_slice(&0_u64.to_be_bytes());
     payload.extend_from_slice(&bytes);
 
     let mut stream = TcpStream::connect(format!("{}:7878", ip))?;
@@ -66,7 +81,12 @@ pub fn send_file_data(ip: String, filename: String, bytes: Vec<u8>) -> std::io::
     Ok(())
 }
 
-pub fn send_file_from_path(app: AppHandle, ip: String, path: String) -> std::io::Result<()> {
+pub fn send_file_from_path(
+    app: AppHandle,
+    ip: String,
+    transfer_id: String,
+    path: String,
+) -> std::io::Result<()> {
     let path = Path::new(&path);
     let filename = path
         .file_name()
@@ -76,11 +96,19 @@ pub fn send_file_from_path(app: AppHandle, ip: String, path: String) -> std::io:
         .to_string();
 
     let filename_bytes = filename.as_bytes();
+    let transfer_id_bytes = transfer_id.as_bytes();
 
     if filename_bytes.len() > u16::MAX as usize {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "Filename is too long",
+        ));
+    }
+
+    if transfer_id_bytes.len() > u16::MAX as usize {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Transfer ID is too long",
         ));
     }
 
@@ -97,8 +125,12 @@ pub fn send_file_from_path(app: AppHandle, ip: String, path: String) -> std::io:
             break;
         }
 
-        let mut payload = Vec::with_capacity(4 + 2 + filename_bytes.len() + 8 + 8 + read_count);
+        let mut payload = Vec::with_capacity(
+            4 + 2 + transfer_id_bytes.len() + 2 + filename_bytes.len() + 8 + 8 + read_count,
+        );
         payload.extend_from_slice(CHUNK_MAGIC);
+        payload.extend_from_slice(&(transfer_id_bytes.len() as u16).to_be_bytes());
+        payload.extend_from_slice(transfer_id_bytes);
         payload.extend_from_slice(&(filename_bytes.len() as u16).to_be_bytes());
         payload.extend_from_slice(filename_bytes);
         payload.extend_from_slice(&total_size.to_be_bytes());
@@ -116,7 +148,10 @@ pub fn send_file_from_path(app: AppHandle, ip: String, path: String) -> std::io:
 
         let _ = app.emit(
             "file-send-progress",
-            format!("{}|{}|{}|{}", filename, offset, total_size, percent),
+            format!(
+                "{}|{}|{}|{}|{}",
+                transfer_id, filename, offset, total_size, percent
+            ),
         );
     }
 

@@ -28,7 +28,12 @@ fn handle_packet(app: &tauri::AppHandle, packet: super::protocol::Packet) {
 
                 println!("Offer received: {} {} {}", transfer_id, filename, filesize);
 
-                crate::transfer::file_receiver::handle_file_offer(app, filename, filesize);
+                crate::transfer::file_receiver::handle_file_offer(
+                    app,
+                    transfer_id,
+                    filename,
+                    filesize,
+                );
             }
         }
 
@@ -44,15 +49,19 @@ fn handle_packet(app: &tauri::AppHandle, packet: super::protocol::Packet) {
         }
 
         PacketType::FileAccept => {
-            println!("File Accepted");
+            let transfer_id = String::from_utf8_lossy(&packet.payload).to_string();
 
-            let _ = app.emit("file-accepted", "accepted");
+            println!("File Accepted: {}", transfer_id);
+
+            let _ = app.emit("file-accepted", transfer_id);
         }
 
         PacketType::FileReject => {
-            println!("File Rejected");
+            let transfer_id = String::from_utf8_lossy(&packet.payload).to_string();
 
-            let _ = app.emit("file-rejected", "rejected");
+            println!("File Rejected: {}", transfer_id);
+
+            let _ = app.emit("file-rejected", transfer_id);
         }
     }
 }

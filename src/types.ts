@@ -5,6 +5,7 @@ export type NearbyDevice = {
 };
 
 export type IncomingFile = {
+  id: string;
   name: string;
   size: number;
   raw: string;
