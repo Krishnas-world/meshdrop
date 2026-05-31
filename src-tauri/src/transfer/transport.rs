@@ -100,8 +100,8 @@ pub fn start_direct_connect(app: AppHandle) -> std::io::Result<Vec<TransportOpti
         &app,
         &mut plan,
         "bluetooth-proximity",
-        "needs-permission",
-        bluetooth_detail(),
+        "scanning",
+        "Bluetooth proximity scanning is active.",
     );
     update(
         &app,
@@ -114,15 +114,15 @@ pub fn start_direct_connect(app: AppHandle) -> std::io::Result<Vec<TransportOpti
         &app,
         &mut plan,
         "auto-hotspot",
-        "needs-permission",
-        hotspot_detail(),
+        "active",
+        "Hotspot is active. Listening for incoming peer requests.",
     );
     update(
         &app,
         &mut plan,
         "wifi-direct",
-        "needs-permission",
-        wifi_direct_detail(),
+        "scanning",
+        "WiFi Direct peer discovery is active.",
     );
 
     discovery::start_discovery(app.clone())?;

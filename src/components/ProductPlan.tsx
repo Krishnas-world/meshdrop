@@ -24,6 +24,8 @@ const phases = [
       "Per-transfer queue",
       "Transfer history",
       "Notifications",
+      "Browser receive mode",
+      "Instant app-less download",
     ],
   },
   {
@@ -54,8 +56,6 @@ const phases = [
       "Clipboard sync",
       "Shared Drop Zone",
       "Nearby messaging",
-      "Browser receive mode",
-      "Instant app-less receive",
       "Temporary collaborative rooms",
       "LAN developer mode",
     ],

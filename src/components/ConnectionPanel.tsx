@@ -5,10 +5,12 @@ type ConnectionPanelProps = {
   devices: NearbyDevice[];
   transports: TransportOption[];
   serverStatus: "idle" | "online" | "error";
+  isScanning: boolean;
   onIpChange: (ip: string) => void;
   onStartServer: () => void;
   onStartDiscovery: () => void;
   onStartDirectConnect: () => void;
+  onStopDirectConnect: () => void;
   onOpenTransportAction: (action: string) => void;
   onSelectDevice: (device: NearbyDevice) => void;
   onSendMessage: () => void;
@@ -19,10 +21,12 @@ export function ConnectionPanel({
   devices,
   transports,
   serverStatus,
+  isScanning,
   onIpChange,
   onStartServer,
   onStartDiscovery,
   onStartDirectConnect,
+  onStopDirectConnect,
   onOpenTransportAction,
   onSelectDevice,
   onSendMessage,
@@ -49,29 +53,82 @@ export function ConnectionPanel({
         </button>
       </div>
 
-      <div className="scan-stage">
-        <div>
-          <p className="eyebrow">Nearby</p>
-          <h3>Find devices without sharing WiFi</h3>
-          <p>
-            MeshDrop will try Bluetooth/QR for discovery, then hotspot or WiFi Direct for the fast link.
-          </p>
-        </div>
-        <button className="primary-button" onClick={onStartDirectConnect}>
-          Start direct scan
-        </button>
+      <div className={`scan-stage ${isScanning ? "scanning" : ""}`}>
+        {isScanning ? (
+          <div className="scanning-container-wrapper">
+            <div className="scanning-container">
+              <div className="radar-animation">
+                <span className="radar-circle circle-1"></span>
+                <span className="radar-circle circle-2"></span>
+                <span className="radar-circle circle-3"></span>
+                <span className="radar-icon">📡</span>
+              </div>
+              <div className="scan-details">
+                <p className="eyebrow active-scan-text">Scanning Active</p>
+                <h3>Searching for nearby peers...</h3>
+                <p>Turn on Bluetooth or WiFi settings on your devices so they can find each other.</p>
+              </div>
+              <button className="ghost-button stop-scan-button" onClick={onStopDirectConnect}>
+                Stop Scan
+              </button>
+            </div>
+
+            <div className="scanning-devices-list">
+              <p className="scanning-devices-header">Discovered Nearby:</p>
+              {realDevices.length === 0 ? (
+                <div className="scanning-empty-state">
+                  <span className="pulse-dot"></span>
+                  <span>Waiting for nearby devices to announce...</span>
+                </div>
+              ) : (
+                <div className="scanning-devices-grid">
+                  {realDevices.map((device) => (
+                    <button
+                      className={`device-card scanner-device-card ${ip === device.address ? "device-card-selected" : ""}`}
+                      type="button"
+                      key={device.id}
+                      onClick={() => onSelectDevice(device)}
+                    >
+                      <span className="device-avatar">{device.name.slice(0, 1)}</span>
+                      <span>
+                        <strong>{device.name}</strong>
+                        <small>{device.address}</small>
+                      </span>
+                      <em>{device.status}</em>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div>
+              <p className="eyebrow">Nearby</p>
+              <h3>Find devices without sharing WiFi</h3>
+              <p>
+                MeshDrop will try Bluetooth/QR for discovery, then hotspot or WiFi Direct for the fast link.
+              </p>
+            </div>
+            <button className="primary-button" onClick={onStartDirectConnect}>
+              Start direct scan
+            </button>
+          </>
+        )}
       </div>
 
-      <div className="transport-grid">
+      <div className="transport-list">
         {primaryRoutes.map((transport) => (
-          <article className="transport-route" key={transport.id}>
-            <div>
+          <article className="transport-row-item" key={transport.id}>
+            <div className="transport-row-info">
               <strong>{transport.name}</strong>
               <small>{transport.detail}</small>
             </div>
-            <div className="transport-route-actions">
-              <em>{formatStatus(transport.status)}</em>
-              {transport.action && (
+            <div className="transport-row-actions">
+              <em className={`status-badge status-${transport.status}`}>
+                {formatStatus(transport.status)}
+              </em>
+              {transport.action && transport.status === "needs-permission" && (
                 <button
                   className="mini-button"
                   onClick={() => onOpenTransportAction(transport.action ?? "")}
@@ -84,40 +141,44 @@ export function ConnectionPanel({
         ))}
       </div>
 
-      <div className="section-heading-row">
-        <div>
-          <p className="eyebrow">Devices</p>
-          <h3>Discovered devices</h3>
-        </div>
-        <button className="ghost-button" onClick={onStartDiscovery}>
-          LAN fallback
-        </button>
-      </div>
-
-      <div className="device-list">
-        {realDevices.length === 0 ? (
-          <div className="empty-device-state">
-            <strong>No devices found yet</strong>
-            <span>Start direct scan, turn on Bluetooth/WiFi, or use the fallback IP below.</span>
-          </div>
-        ) : (
-          realDevices.map((device) => (
-            <button
-              className={`device-card ${ip === device.address ? "device-card-selected" : ""}`}
-              type="button"
-              key={device.id}
-              onClick={() => onSelectDevice(device)}
-            >
-              <span className="device-avatar">{device.name.slice(0, 1)}</span>
-              <span>
-                <strong>{device.name}</strong>
-                <small>{device.address}</small>
-              </span>
-              <em>{device.status}</em>
+      {!isScanning && (
+        <>
+          <div className="section-heading-row">
+            <div>
+              <p className="eyebrow">Devices</p>
+              <h3>Discovered devices</h3>
+            </div>
+            <button className="ghost-button" onClick={onStartDiscovery}>
+              LAN fallback
             </button>
-          ))
-        )}
-      </div>
+          </div>
+
+          <div className="device-list">
+            {realDevices.length === 0 ? (
+              <div className="empty-device-state">
+                <strong>No devices found yet</strong>
+                <span>Start direct scan, turn on Bluetooth/WiFi, or use the fallback IP below.</span>
+              </div>
+            ) : (
+              realDevices.map((device) => (
+                <button
+                  className={`device-card ${ip === device.address ? "device-card-selected" : ""}`}
+                  type="button"
+                  key={device.id}
+                  onClick={() => onSelectDevice(device)}
+                >
+                  <span className="device-avatar">{device.name.slice(0, 1)}</span>
+                  <span>
+                    <strong>{device.name}</strong>
+                    <small>{device.address}</small>
+                  </span>
+                  <em>{device.status}</em>
+                </button>
+              ))
+            )}
+          </div>
+        </>
+      )}
 
       <details className="fallback-panel">
         <summary>Advanced fallback</summary>
@@ -138,7 +199,9 @@ export function ConnectionPanel({
                 <strong>{transport.name}</strong>
                 <small>{transport.detail}</small>
               </div>
-              <em>{formatStatus(transport.status)}</em>
+              <em className={`status-badge status-${transport.status}`}>
+                {formatStatus(transport.status)}
+              </em>
             </article>
           ))}
         </div>
@@ -160,6 +223,7 @@ function formatStatus(status: string) {
     ready: "Ready",
     next: "Next",
     planned: "Planned",
+    active: "Active",
   };
 
   return labels[status] ?? status;

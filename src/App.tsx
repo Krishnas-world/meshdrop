@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { openUrl } from "@tauri-apps/plugin-opener";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ConnectionPanel } from "./components/ConnectionPanel";
 import { IncomingFileDialog } from "./components/IncomingFileDialog";
@@ -39,6 +39,9 @@ function App() {
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [discoveredDevices, setDiscoveredDevices] = useState<NearbyDevice[]>([]);
   const [transports, setTransports] = useState<TransportOption[]>([]);
+  const [isScanning, setIsScanning] = useState(false);
+  const [webShareActive, setWebShareActive] = useState(false);
+  const [webShareUrl, setWebShareUrl] = useState("");
   const selectedFileRef = useRef<File | null>(null);
   const selectedFilePathRef = useRef("");
   const outgoingTransferIdRef = useRef("");
@@ -83,7 +86,7 @@ function App() {
 
   function upsertTransferActivity(
     transferId: string,
-    item: Omit<ActivityItem, "id" | "time" | "transferId">,
+    item: Partial<Omit<ActivityItem, "id" | "time" | "transferId">>,
   ) {
     setActivity((current) => {
       const now = new Date().toLocaleTimeString([], {
@@ -95,7 +98,11 @@ function App() {
       if (!existing) {
         return [
           {
-            ...item,
+            title: item.title || "Transfer",
+            detail: item.detail || "",
+            status: item.status || "active",
+            progress: item.progress,
+            direction: item.direction,
             id: transferId,
             transferId,
             time: now,
@@ -338,6 +345,50 @@ function App() {
       });
     });
 
+    const unlistenWebShareStart = listen<string>("web-share-download-start", (event) => {
+      const [filename, ip, device] = event.payload.split("|");
+      const clientDetails = `${ip} (${device})`;
+      setTransferStatus(`Web Share: ${filename} downloading by ${clientDetails}`);
+      
+      upsertTransferActivity("web-share", {
+        title: `Web Share: ${filename}`,
+        detail: `Downloading: ${clientDetails}`,
+        status: "active",
+        progress: 0,
+        direction: "send",
+      });
+    });
+
+    const unlistenWebShareProgress = listen<number>("web-share-download-progress", (event) => {
+      upsertTransferActivity("web-share", {
+        status: "active",
+        progress: event.payload,
+        direction: "send",
+      });
+    });
+
+    const unlistenWebShareComplete = listen<string>("web-share-download-complete", (event) => {
+      setTransferStatus("Web Share: Download finished!");
+      upsertTransferActivity("web-share", {
+        title: "Web Share Complete",
+        detail: `Sent file: ${event.payload}`,
+        status: "done",
+        progress: 100,
+        direction: "send",
+      });
+    });
+
+    const unlistenWebShareAppStart = listen<string>("web-share-app-download-start", (event) => {
+      const [os, filename] = event.payload.split("|");
+      setTransferStatus(`Web Share: Installer (${filename}) requested for ${os}`);
+      addActivity({
+        title: "App Installer Requested",
+        detail: `OS: ${os} -> ${filename}`,
+        status: "active",
+        direction: "send",
+      });
+    });
+
     return () => {
       unlistenMessage.then((fn) => fn());
       unlistenDeviceDiscovered.then((fn) => fn());
@@ -348,6 +399,10 @@ function App() {
       unlistenFileReceived.then((fn) => fn());
       unlistenSendProgress.then((fn) => fn());
       unlistenReceiveProgress.then((fn) => fn());
+      unlistenWebShareStart.then((fn) => fn());
+      unlistenWebShareProgress.then((fn) => fn());
+      unlistenWebShareComplete.then((fn) => fn());
+      unlistenWebShareAppStart.then((fn) => fn());
     };
   }, []);
 
@@ -376,40 +431,69 @@ function App() {
 
   async function startDirectConnect() {
     try {
+      setIsScanning(true);
       const plan = await invoke<TransportOption[]>("start_direct_connect");
       setTransports(plan);
       setTransferStatus("Direct scan started. Turn on Bluetooth/WiFi or use LAN fallback while adapters come online.");
     } catch (error) {
+      setIsScanning(false);
       console.error("Failed to start direct connect:", error);
       setTransferStatus(`Could not start direct scan: ${String(error)}`);
     }
   }
 
-  async function openTransportAction(action: string) {
-    const urls: Record<string, string> = {
-      "bluetooth-settings": "ms-settings:bluetooth",
-      "wifi-settings": "ms-settings:network-wifi",
-      "hotspot-settings": "ms-settings:network-mobilehotspot",
-    };
+  function stopDirectConnect() {
+    setIsScanning(false);
+    setTransferStatus("Direct scan stopped.");
+  }
 
+  async function openTransportAction(action: string) {
     if (action === "qr-pairing") {
       setTransferStatus("QR pairing screen is next in v0.3.");
       return;
     }
 
     try {
-      const url = urls[action];
-
-      if (!url) {
-        setTransferStatus("No system action is wired for this transport yet.");
-        return;
-      }
-
-      await openUrl(url);
+      await invoke("open_system_settings", { action });
       setTransferStatus("Opened system settings. Turn on the required adapter, then start direct scan again.");
     } catch (error) {
       console.error("Failed to open transport settings:", error);
       setTransferStatus("Could not open system settings for this adapter.");
+    }
+  }
+
+  async function startWebShare() {
+    if (!selectedFilePath.trim()) {
+      setTransferStatus("Select a file using the native picker first");
+      return;
+    }
+    try {
+      const url = await invoke<string>("start_web_share", {
+        path: selectedFilePath.trim(),
+      });
+      setWebShareUrl(url);
+      setWebShareActive(true);
+      setTransferStatus(`Web Share listening on ${url}`);
+      addActivity({
+        title: "Web Share Active",
+        detail: `Access from browser at ${url}`,
+        status: "active",
+        direction: "send",
+      });
+    } catch (error) {
+      console.error("Failed to start web share:", error);
+      setTransferStatus(`Could not start web share: ${String(error)}`);
+    }
+  }
+
+  async function stopWebShare() {
+    try {
+      await invoke("stop_web_share");
+      setWebShareActive(false);
+      setWebShareUrl("");
+      setTransferStatus("Web Share server stopped.");
+    } catch (error) {
+      console.error("Failed to stop web share:", error);
     }
   }
 
@@ -572,10 +656,12 @@ function App() {
             devices={nearbyDevices}
             transports={transports}
             serverStatus={serverStatus}
+            isScanning={isScanning}
             onIpChange={setIp}
             onStartServer={startServer}
             onStartDiscovery={startDiscovery}
             onStartDirectConnect={startDirectConnect}
+            onStopDirectConnect={stopDirectConnect}
             onOpenTransportAction={openTransportAction}
             onSelectDevice={(device) => {
               if (device.id === "discovery-placeholder") {
@@ -596,12 +682,16 @@ function App() {
             selectedFilePath={selectedFilePath}
             needsFilePath={needsFilePath}
             canSend={canSend}
+            webShareActive={webShareActive}
+            webShareUrl={webShareUrl}
             onFileChange={(file) => {
               setSelectedFile(file);
               setSelectedFilePath((file as (File & { path?: string }) | null)?.path ?? "");
             }}
             onFilePathChange={setSelectedFilePath}
             onSendOffer={sendFileOffer}
+            onStartWebShare={startWebShare}
+            onStopWebShare={stopWebShare}
           />
 
           <TransferActivity

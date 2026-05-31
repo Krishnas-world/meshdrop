@@ -78,6 +78,60 @@ fn send_file_reject(ip: String, transfer_id: String) {
 }
 
 #[tauri::command]
+fn open_system_settings(action: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let url = match action.as_str() {
+            "bluetooth-settings" => "ms-settings:bluetooth",
+            "wifi-settings" => "ms-settings:network-wifi",
+            "hotspot-settings" => "ms-settings:network-mobilehotspot",
+            _ => return Err(format!("Unsupported action: {}", action)),
+        };
+        std::process::Command::new("cmd")
+            .args(&["/c", "start", url])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let path = match action.as_str() {
+            "bluetooth-settings" => "/System/Library/PreferencePanes/Bluetooth.prefPane",
+            "wifi-settings" => "/System/Library/PreferencePanes/Network.prefPane",
+            "hotspot-settings" => "/System/Library/PreferencePanes/SharingPref.prefPane",
+            _ => return Err(format!("Unsupported action: {}", action)),
+        };
+        std::process::Command::new("open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let args = match action.as_str() {
+            "bluetooth-settings" => vec!["bluetooth"],
+            "wifi-settings" => vec!["wifi"],
+            "hotspot-settings" => vec!["network"],
+            _ => return Err(format!("Unsupported action: {}", action)),
+        };
+        std::process::Command::new("gnome-control-center")
+            .args(&args)
+            .spawn()
+            .or_else(|_| {
+                std::process::Command::new("nm-connection-editor")
+                    .spawn()
+            })
+            .map_err(|e| format!("Could not open system settings: {}", e))?;
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        Err("Unsupported OS for settings shortcuts".to_string())
+    }
+}
+
+#[tauri::command]
 fn get_receive_folder() -> String {
     transfer::file_receiver::get_receive_folder()
 }
@@ -91,10 +145,26 @@ fn set_receive_folder(path: String) -> Result<String, String> {
 fn set_receive_location(path: String) -> Result<String, String> {
     transfer::file_receiver::set_receive_location(path).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+fn start_web_share(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    transfer::web_server::start_web_server(app, path)
+}
+
+#[tauri::command]
+fn stop_web_share() {
+    transfer::web_server::stop_web_server();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let handle = app.handle().clone();
+            let _ = transfer::web_server::start_web_server(handle, String::new());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             start_server,
             start_discovery,
@@ -109,7 +179,10 @@ pub fn run() {
             send_file_reject,
             get_receive_folder,
             set_receive_folder,
-            set_receive_location
+            set_receive_location,
+            open_system_settings,
+            start_web_share,
+            stop_web_share
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

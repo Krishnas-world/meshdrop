@@ -11,6 +11,10 @@ type SendPanelProps = {
   onFileChange: (file: File | null) => void;
   onFilePathChange: (path: string) => void;
   onSendOffer: () => void;
+  webShareActive: boolean;
+  webShareUrl: string;
+  onStartWebShare: () => void;
+  onStopWebShare: () => void;
 };
 
 export function SendPanel({
@@ -21,6 +25,10 @@ export function SendPanel({
   onFileChange,
   onFilePathChange,
   onSendOffer,
+  webShareActive,
+  webShareUrl,
+  onStartWebShare,
+  onStopWebShare,
 }: SendPanelProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -92,9 +100,46 @@ export function SendPanel({
         </p>
       )}
 
-      <button className="primary-button wide-button" disabled={!canSend} onClick={onSendOffer}>
-        Send offer
-      </button>
+      <div className="send-actions-container">
+        <button className="primary-button send-offer-btn" disabled={!canSend} onClick={onSendOffer}>
+          Send offer
+        </button>
+
+        {selectedFilePath && (
+          <div className="web-share-controls">
+            {webShareActive ? (
+              <div className="web-share-card">
+                <div className="web-share-header-row">
+                  <span className="pulse-dot"></span>
+                  <strong>Web Share Active</strong>
+                </div>
+                <p className="web-share-url-text">
+                  Open this URL in your phone or other device browser:
+                </p>
+                <code className="web-share-link">{webShareUrl}</code>
+                <div className="qr-container">
+                  <img
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&color=17201b&bgcolor=f7f9f5&data=${encodeURIComponent(webShareUrl)}`}
+                    alt="QR Code to scan link"
+                    className="web-share-qr"
+                  />
+                </div>
+                <button className="ghost-button stop-share-button" onClick={onStopWebShare}>
+                  Stop Web Share
+                </button>
+              </div>
+            ) : (
+              <button
+                className="ghost-button web-share-button"
+                type="button"
+                onClick={onStartWebShare}
+              >
+                🌐 Share to phone/other devices via Browser
+              </button>
+            )}
+          </div>
+        )}
+      </div>
     </section>
   );
 }
