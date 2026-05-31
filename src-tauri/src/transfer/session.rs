@@ -9,14 +9,8 @@ pub struct TransferSession {
     pub file_path: String,
 }
 
-pub static SESSIONS: OnceLock<
-    Mutex<HashMap<String, TransferSession>>
-> = OnceLock::new();
+pub static SESSIONS: OnceLock<Mutex<HashMap<String, TransferSession>>> = OnceLock::new();
 
-pub fn sessions()
-    -> &'static Mutex<HashMap<String, TransferSession>>
-{
-    SESSIONS.get_or_init(|| {
-        Mutex::new(HashMap::new())
-    })
+pub fn sessions() -> &'static Mutex<HashMap<String, TransferSession>> {
+    SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }

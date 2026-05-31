@@ -1,0 +1,820 @@
+# MeshDrop - Project Documentation
+
+## Overview
+
+MeshDrop is a cross-platform peer-to-peer file sharing application built using:
+
+* Tauri v2
+* React + TypeScript
+* Rust
+* TCP Networking
+
+Goal:
+
+Provide an AirDrop / Nearby Share style experience across Windows, Linux, and macOS without requiring cloud storage.
+
+Files are transferred directly between devices over local network connections.
+
+---
+
+# Current Architecture
+
+## Frontend
+
+Technology:
+
+* React
+* TypeScript
+* Tauri Frontend
+
+Responsibilities:
+
+* Device UI
+* File selection
+* Transfer requests
+* Accept / Reject dialogs
+* Progress display
+* Settings
+
+---
+
+## Backend
+
+Technology:
+
+* Rust
+* Tauri Commands
+
+Responsibilities:
+
+* TCP Server
+* TCP Client
+* Protocol handling
+* File transfer
+* Local storage
+* Device discovery
+
+---
+
+# Networking Layer
+
+Port:
+7878
+
+Protocol:
+Custom MeshDrop Protocol v1
+
+Packet Structure:
+
+Version (1 byte)
+Packet Type (1 byte)
+Payload Length (8 bytes)
+Payload
+
+Payload
+
+Protocol Version:
+1
+
+---
+
+# Packet Types
+
+## Implemented
+
+Message = 1
+
+Used for:
+
+* Test messages
+* Debug communication
+
+---
+
+FileOffer = 2
+
+Used for:
+
+* File transfer requests
+
+Payload:
+
+transfer_id|filename|filesize
+
+Example:
+
+1e168033-cc93-4995-8fba-e662ce9f3fd8|LLR.pdf|81693
+
+---
+
+FileAccept = 3
+
+Used when receiver accepts a transfer.
+
+---
+
+FileReject = 4
+
+Used when receiver rejects a transfer.
+
+---
+
+FileData = 5
+
+Used for actual file contents.
+
+Contains:
+
+* Filename
+* File Bytes
+
+---
+
+# Implemented Features
+
+## Messaging
+
+Status:
+COMPLETE
+
+Features:
+
+* Send message
+* Receive message
+* Event-driven UI updates
+
+---
+
+## File Offer Workflow
+
+Status:
+COMPLETE
+
+Flow:
+
+Sender
+↓
+Send File Offer
+↓
+Receiver Popup
+↓
+Accept / Reject
+↓
+Response sent back
+
+---
+
+## File Transfer
+
+Status:
+COMPLETE (V1)
+
+Flow:
+
+Select File
+↓
+Send Offer
+↓
+Receiver Accepts
+↓
+Sender Sends FileData
+↓
+Receiver Saves File
+
+---
+
+## File Saving
+
+Status:
+COMPLETE
+
+Default Path:
+
+Downloads/MeshDrop
+
+Features:
+
+* Auto create folder
+* Custom receive folder
+* File received event
+
+---
+
+## Rust ↔ React Events
+
+Status:
+COMPLETE
+
+Events:
+
+message-received
+
+incoming-file-offer
+
+file-accepted
+
+file-rejected
+
+file-received
+
+---
+
+# Session System
+
+Status:
+PARTIALLY IMPLEMENTED
+
+TransferSession:
+
+* id
+* file_name
+* file_size
+* file_path
+
+Current:
+Session creation exists.
+
+Pending:
+Use session ID throughout transfer lifecycle.
+
+---
+
+# UI Status
+
+Current UI
+
+✔ Start Receiver
+
+✔ IP Input
+
+✔ File Picker
+
+✔ Send Message
+
+✔ Send File Offer
+
+✔ Receive Folder Setting
+
+✔ Incoming File Dialog
+
+✔ Accept Button
+
+✔ Reject Button
+
+✔ Transfer Status
+
+---
+
+# Missing UI
+
+## Device List
+
+Instead of:
+
+192.168.29.175
+
+Show:
+
+Nearby Devices
+
+Krishna Laptop
+Office PC
+Linux Server
+
+Status:
+Not Implemented
+
+---
+
+## Transfer Progress
+
+Current:
+
+Sending...
+Done
+
+Desired:
+
+0%
+25%
+50%
+75%
+100%
+
+Status:
+Not Implemented
+
+---
+
+## Transfer History
+
+Show:
+
+Filename
+Size
+Date
+Sender
+Status
+
+Status:
+Not Implemented
+
+---
+
+## Notifications
+
+Examples:
+
+File received
+
+Transfer completed
+
+Transfer failed
+
+Status:
+Not Implemented
+
+---
+
+## Modern UI
+
+Current:
+Developer UI
+
+Future:
+Nearby Share style UI
+
+Features:
+
+Large Device Cards
+
+Transfer Queue
+
+Animations
+
+Dark Mode
+
+Settings Page
+
+Status:
+Not Implemented
+
+---
+
+# Major Features Pending
+
+## Device Discovery
+
+Priority:
+VERY HIGH
+
+Goal:
+
+Automatically discover nearby MeshDrop devices.
+
+Possible Methods:
+
+UDP Broadcast
+
+mDNS
+
+Zeroconf
+
+Result:
+
+No IP typing required.
+
+---
+
+## Chunked File Transfer
+
+Priority:
+HIGH
+
+Current:
+Entire file loaded into memory.
+
+Problem:
+
+Large files consume RAM.
+
+Future:
+
+Read file in chunks.
+
+Example:
+
+64KB
+
+128KB
+
+512KB
+
+Chunks
+
+Benefits:
+
+Large file support.
+
+---
+
+## Folder Transfer
+
+Priority:
+HIGH
+
+Send:
+
+Entire folders
+
+Multiple files
+
+Directory structures
+
+---
+
+## Transfer Resume
+
+Priority:
+MEDIUM
+
+If transfer stops:
+
+Resume from last byte.
+
+---
+
+## Device Naming
+
+Priority:
+MEDIUM
+
+Examples:
+
+Krishna-PC
+
+Mangalore-Laptop
+
+Office-Workstation
+
+Instead of IP addresses.
+
+---
+
+## Transfer Queue
+
+Priority:
+MEDIUM
+
+Support:
+
+Multiple pending transfers.
+
+Multiple active transfers.
+
+---
+
+## Transfer History Database
+
+Priority:
+MEDIUM
+
+Store:
+
+File Name
+
+Transfer Time
+
+Sender
+
+Receiver
+
+Status
+
+Suggested:
+
+SQLite
+
+---
+
+## Bluetooth Transfer
+
+Priority:
+LOW
+
+Reason:
+
+Slower than WiFi.
+
+Useful fallback.
+
+---
+
+## Hotspot Mode
+
+Priority:
+HIGH
+
+Goal:
+
+Transfer without existing WiFi.
+
+Flow:
+
+Device A creates hotspot.
+
+Device B connects.
+
+MeshDrop discovers peers.
+
+Transfer starts.
+
+---
+
+## Encryption
+
+Priority:
+HIGH
+
+Future:
+
+AES-256
+
+Session Keys
+
+Encrypted Payloads
+
+Prevent packet snooping.
+
+---
+
+# Future Versions
+
+## MeshDrop v0.3
+
+Device Discovery
+
+Device Naming
+
+Transfer Progress
+
+Better UI
+
+---
+
+## MeshDrop v0.4
+
+Folder Transfer
+
+Chunked Transfers
+
+Transfer Queue
+
+---
+
+## MeshDrop v0.5
+
+Hotspot Mode
+
+Cross Platform Testing
+
+Linux Support
+
+macOS Support
+
+---
+
+## MeshDrop v1.0
+
+AirDrop-like experience
+
+Automatic Discovery
+
+Secure Transfers
+
+Transfer History
+
+Modern UI
+
+Production Ready
+
+---
+
+# Current Project Status
+
+Overall Completion:
+
+Core Networking: 85%
+
+Core File Transfer: 80%
+
+UI: 35%
+
+Discovery: 0%
+
+Production Readiness: 20%
+
+Estimated Version:
+
+MeshDrop v0.2
+Features That Could Make It Viral
+
+Core Features MVP
+Phase 1 — Basic LAN Transfer
+
+Start simple.
+
+MVP:
+Detect devices on same network
+Send files
+Receive files
+Progress bar
+QR pairing
+
+This alone is already useful.
+
+Phase 2 — Auto Hotspot Mode
+
+If no WiFi:
+
+One laptop creates hotspot
+Other joins automatically
+
+This becomes magical.
+
+Phase 3 — Bluetooth Discovery
+
+Use Bluetooth to:
+
+announce presence
+exchange connection info
+
+Then switch to WiFi transfer.
+
+Exactly how modern systems do it.
+Clipboard Sync
+
+Like:
+
+copy text on one laptop
+paste on another
+“Drop Zone”
+
+Temporary shared folder.
+
+Instant App-less Receive
+
+Receiver opens:
+http://192.168.x.x:3000
+
+and downloads via browser.
+
+Very powerful.
+
+Multi-device Broadcast
+
+Send one file to:
+
+whole classroom
+meeting room
+lab
+
+Feature Roadmap
+Phase 1 — Core Transfer Engine
+
+This is your foundation.
+
+Must-have
+Device discovery
+File send/receive
+Drag & drop
+Progress tracking
+Resume interrupted transfer
+QR pairing
+Encryption
+Tech
+TCP/QUIC
+mDNS
+local sockets
+Phase 2 — Ecosystem Features
+Clipboard Sync
+
+Like:
+
+copy text/code on one laptop
+paste on another
+
+Huge for developers.
+
+Could support:
+
+text
+images
+code snippets
+Shared Drop Zone
+
+A local shared folder between nearby devices.
+
+Example:
+
+Team in lab
+Everyone sees updates instantly
+
+You can even support:
+
+auto-sync
+version conflict handling
+Nearby Messaging
+
+Tiny offline chat system.
+
+Useful for:
+
+classrooms
+events
+hackathons
+LAN gaming
+
+No internet needed.
+
+Browser Receive Mode
+
+This is extremely important.
+
+Receiver without app can:
+
+scan QR
+open local URL
+download instantly
+
+This removes friction massively.
+
+Phase 3 — Smart Networking
+Auto Hotspot Creation
+
+If no network exists:
+
+one device creates hotspot
+others connect automatically
+
+This becomes magical UX.
+
+Adaptive Transport Layer
+
+Your app decides:
+
+Bluetooth
+WiFi LAN
+Hotspot
+WiFi Direct
+
+based on:
+
+speed
+availability
+OS support
+Multi-device Broadcasting
+
+Teacher sends:
+
+PDFs
+assignments
+ZIPs
+
+to 50 laptops at once.
+
+Very useful for colleges.
+
+Phase 4 — Power Features
+Cross-device Notifications
+Phone notification mirroring
+Device alerts
+
+Like KDE Connect but smoother.
+
+Temporary Collaborative Rooms
+
+Nearby devices join a local room.
+
+Can share:
+
+files
+clipboard
+chat
+whiteboard later
+
+without internet.
+
+LAN Developer Mode
+
+This could become HUGE.
+
+Examples:
+
+share local server instantly
+transfer builds
+sync configs
+quick SSH discovery
+local API testing
+
+Developers would love this.

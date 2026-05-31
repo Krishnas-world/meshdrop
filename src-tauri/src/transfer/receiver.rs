@@ -54,7 +54,17 @@ pub fn start_server(app: tauri::AppHandle) {
                             }
 
                             PacketType::FileData => {
-                                println!("Received FileData packet");
+                                match crate::transfer::file_receiver::handle_file_data(
+                                    &app,
+                                    &packet.payload,
+                                ) {
+                                    Ok(path) => {
+                                        println!("File saved: {}", path.display());
+                                    }
+                                    Err(e) => {
+                                        println!("File save error: {}", e);
+                                    }
+                                }
                             }
 
                             PacketType::FileAccept => {
