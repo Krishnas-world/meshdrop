@@ -1,18 +1,72 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ConnectionPanel } from "./components/ConnectionPanel";
+import { IncomingFileDialog } from "./components/IncomingFileDialog";
+import { ProductPlan } from "./components/ProductPlan";
+import { ReceiveSettings } from "./components/ReceiveSettings";
+import { SendPanel } from "./components/SendPanel";
+import { TransferActivity } from "./components/TransferActivity";
+import type { ActivityItem, IncomingFile } from "./types";
+
+function parseIncomingFile(payload: string): IncomingFile | null {
+  const [name, size] = payload.split("|");
+
+  if (!name || !size) {
+    return null;
+  }
+
+  return {
+    name,
+    size: Number(size),
+    raw: payload,
+  };
+}
 
 function App() {
   const [ip, setIp] = useState("");
   const [receivedMessage, setReceivedMessage] = useState("");
-  const [incomingFile, setIncomingFile] = useState("");
+  const [incomingFile, setIncomingFile] = useState<IncomingFile | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [senderAccepted, setSenderAccepted] = useState(false);
-  const [senderRejected, setSenderRejected] = useState(false);
   const [receiveFolder, setReceiveFolder] = useState("");
-  const [transferStatus, setTransferStatus] = useState("");
+  const [serverStatus, setServerStatus] = useState<"idle" | "online" | "error">("idle");
+  const [transferStatus, setTransferStatus] = useState("Ready for nearby transfers");
+  const [progress, setProgress] = useState(0);
+  const [activity, setActivity] = useState<ActivityItem[]>([]);
   const selectedFileRef = useRef<File | null>(null);
   const ipRef = useRef("");
+
+  const canSend = Boolean(ip.trim() && selectedFile);
+
+  const nearbyDevices = useMemo(
+    () => [
+      {
+        name: "Manual LAN peer",
+        address: ip.trim() || "Enter IP",
+        status: ip.trim() ? "Ready" : "Needs address",
+      },
+      {
+        name: "Device discovery",
+        address: "mDNS / UDP",
+        status: "Planned v0.3",
+      },
+    ],
+    [ip],
+  );
+
+  function addActivity(item: Omit<ActivityItem, "id" | "time">) {
+    setActivity((current) => [
+      {
+        ...item,
+        id: crypto.randomUUID(),
+        time: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      },
+      ...current,
+    ]);
+  }
 
   useEffect(() => {
     selectedFileRef.current = selectedFile;
@@ -28,31 +82,45 @@ function App() {
       .catch((error) => console.error("Failed to load receive folder:", error));
 
     const unlistenMessage = listen<string>("message-received", (event) => {
-      console.log("Message:", event.payload);
       setReceivedMessage(event.payload);
+      addActivity({
+        title: "Message received",
+        detail: event.payload,
+        status: "done",
+      });
     });
 
     const unlistenFileOffer = listen<string>("incoming-file-offer", (event) => {
-      console.log("File Offer:", event.payload);
-      setIncomingFile(event.payload);
+      const file = parseIncomingFile(event.payload);
+      setIncomingFile(file);
       setTransferStatus("Incoming file offer");
+      setProgress(10);
+
+      if (file) {
+        addActivity({
+          title: `Incoming ${file.name}`,
+          detail: "Waiting for your response",
+          status: "waiting",
+        });
+      }
     });
 
     const unlistenAccepted = listen("file-accepted", async () => {
-      setSenderAccepted(true);
-      setSenderRejected(false);
-
       const file = selectedFileRef.current;
       const targetIp = ipRef.current.trim();
 
       if (!file || !targetIp) {
-        setTransferStatus("Receiver accepted, but no selected file is ready to send.");
+        setTransferStatus("Receiver accepted, but no selected file is ready.");
+        setProgress(0);
         return;
       }
 
       try {
-        setTransferStatus(`Sending ${file.name}...`);
+        setTransferStatus(`Sending ${file.name}`);
+        setProgress(35);
+
         const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+        setProgress(75);
 
         await invoke("send_file_data", {
           ip: targetIp,
@@ -60,21 +128,43 @@ function App() {
           bytes,
         });
 
+        setProgress(100);
         setTransferStatus(`Sent ${file.name}`);
+        addActivity({
+          title: `Sent ${file.name}`,
+          detail: `${file.size.toLocaleString()} bytes to ${targetIp}`,
+          status: "done",
+        });
       } catch (error) {
         console.error("Failed to send file data:", error);
         setTransferStatus("Failed to send file data");
+        setProgress(0);
+        addActivity({
+          title: "Send failed",
+          detail: file.name,
+          status: "failed",
+        });
       }
     });
 
     const unlistenRejected = listen("file-rejected", () => {
-      setSenderAccepted(false);
-      setSenderRejected(true);
       setTransferStatus("Receiver rejected the file");
+      setProgress(0);
+      addActivity({
+        title: "Transfer rejected",
+        detail: selectedFileRef.current?.name ?? "File offer",
+        status: "failed",
+      });
     });
 
     const unlistenFileReceived = listen<string>("file-received", (event) => {
+      setProgress(100);
       setTransferStatus(`Saved to ${event.payload}`);
+      addActivity({
+        title: "File received",
+        detail: event.payload,
+        status: "done",
+      });
     });
 
     return () => {
@@ -89,9 +179,12 @@ function App() {
   async function startServer() {
     try {
       await invoke("start_server");
-      console.log("Server started");
+      setServerStatus("online");
+      setTransferStatus("Receiver listening on port 7878");
     } catch (error) {
       console.error("Failed to start server:", error);
+      setServerStatus("error");
+      setTransferStatus("Could not start receiver");
     }
   }
 
@@ -102,15 +195,25 @@ function App() {
         message: "Hello from MeshDrop",
       });
 
-      console.log("Message sent");
+      addActivity({
+        title: "Message sent",
+        detail: ip,
+        status: "done",
+      });
     } catch (error) {
       console.error("Failed to send message:", error);
+      setTransferStatus("Failed to send test message");
     }
   }
 
   async function sendFileOffer() {
     if (!selectedFile) {
       setTransferStatus("Select a file first");
+      return;
+    }
+
+    if (!ip.trim()) {
+      setTransferStatus("Enter the receiver IP first");
       return;
     }
 
@@ -121,10 +224,13 @@ function App() {
         filesize: selectedFile.size,
       });
 
-      console.log("File offer sent");
+      setProgress(15);
       setTransferStatus(`Offer sent for ${selectedFile.name}`);
-      setSenderAccepted(false);
-      setSenderRejected(false);
+      addActivity({
+        title: `Offer sent`,
+        detail: `${selectedFile.name} to ${ip}`,
+        status: "waiting",
+      });
     } catch (error) {
       console.error("Failed to send file offer:", error);
       setTransferStatus("Failed to send file offer");
@@ -132,6 +238,10 @@ function App() {
   }
 
   async function acceptFile() {
+    if (!incomingFile) {
+      return;
+    }
+
     try {
       const savedFolder = await invoke<string>("set_receive_folder", {
         path: receiveFolder,
@@ -143,7 +253,8 @@ function App() {
         ip,
       });
 
-      setIncomingFile("");
+      setIncomingFile(null);
+      setProgress(45);
       setTransferStatus("Accepted. Waiting for file data...");
     } catch (error) {
       console.error(error);
@@ -157,115 +268,71 @@ function App() {
         ip,
       });
 
-      setIncomingFile("");
+      setIncomingFile(null);
+      setProgress(0);
       setTransferStatus("File rejected");
     } catch (error) {
       console.error(error);
+      setTransferStatus("Could not reject file");
     }
   }
 
-  const [incomingName, incomingSize] = incomingFile.split("|");
-
   return (
-    <div
-      style={{
-        padding: "40px",
-        display: "flex",
-        flexDirection: "column",
-        gap: "12px",
-        maxWidth: "500px",
-      }}
-    >
-      <h1>MeshDrop</h1>
+    <main className="app-shell">
+      <section className="workspace">
+        <header className="topbar">
+          <div>
+            <p className="eyebrow">Local-first file sharing</p>
+            <h1>MeshDrop</h1>
+          </div>
+          <div className={`server-pill server-pill-${serverStatus}`}>
+            <span />
+            {serverStatus === "online" ? "Receiver online" : "Receiver idle"}
+          </div>
+        </header>
 
-      <button onClick={startServer}>Start Receiver</button>
+        <div className="dashboard-grid">
+          <ConnectionPanel
+            ip={ip}
+            devices={nearbyDevices}
+            serverStatus={serverStatus}
+            onIpChange={setIp}
+            onStartServer={startServer}
+            onSendMessage={sendMessage}
+          />
 
-      <input
-        type="text"
-        placeholder="Enter receiver IP"
-        value={ip}
-        onChange={(e) => setIp(e.target.value)}
-        style={{
-          padding: "10px",
-          borderRadius: "8px",
-          border: "1px solid #ccc",
-        }}
-      />
+          <SendPanel
+            selectedFile={selectedFile}
+            canSend={canSend}
+            onFileChange={setSelectedFile}
+            onSendOffer={sendFileOffer}
+          />
 
-      <button onClick={sendMessage}>Send Message</button>
+          <TransferActivity
+            progress={progress}
+            status={transferStatus}
+            receivedMessage={receivedMessage}
+            activity={activity}
+          />
 
-      <label>
-        Receive folder
-        <input
-          type="text"
-          value={receiveFolder}
-          onChange={(e) => setReceiveFolder(e.target.value)}
-          style={{
-            boxSizing: "border-box",
-            display: "block",
-            marginTop: "6px",
-            width: "100%",
-            padding: "10px",
-            borderRadius: "8px",
-            border: "1px solid #ccc",
-          }}
-        />
-      </label>
+          <ReceiveSettings
+            receiveFolder={receiveFolder}
+            onReceiveFolderChange={setReceiveFolder}
+          />
+        </div>
+      </section>
 
-      <input
-        type="file"
-        onChange={(e) => {
-          const file = e.target.files?.[0] ?? null;
-          setSelectedFile(file);
-        }}
-      />
-
-      {selectedFile && (
-        <p>
-          Selected: {selectedFile.name} ({selectedFile.size} bytes)
-        </p>
-      )}
-
-      <button onClick={sendFileOffer}>Send File Offer</button>
-
-      <h3>Last Message</h3>
-
-      <p>{receivedMessage || "No messages received"}</p>
-
-      {senderAccepted && <p>Receiver accepted. Sending file data now.</p>}
-
-      {senderRejected && <p>Receiver rejected the file</p>}
-
-      {transferStatus && <p>{transferStatus}</p>}
+      <ProductPlan />
 
       {incomingFile && (
-        <div
-          style={{
-            border: "1px solid #888",
-            padding: "12px",
-            borderRadius: "8px",
-            marginTop: "10px",
-          }}
-        >
-          <h3>Incoming File</h3>
-
-          <p>
-            {incomingName} ({incomingSize} bytes)
-          </p>
-
-          <div
-            style={{
-              display: "flex",
-              gap: "10px",
-            }}
-          >
-            <button onClick={acceptFile}>Accept</button>
-
-            <button onClick={rejectFile}>Reject</button>
-          </div>
-        </div>
+        <IncomingFileDialog
+          file={incomingFile}
+          receiveFolder={receiveFolder}
+          onAccept={acceptFile}
+          onReject={rejectFile}
+        />
       )}
-    </div>
+    </main>
   );
 }
 
