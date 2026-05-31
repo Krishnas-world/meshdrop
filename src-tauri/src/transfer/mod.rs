@@ -1,3 +1,4 @@
+pub mod discovery;
 pub mod file_receiver;
 pub mod file_response_sender;
 pub mod file_sender;
@@ -5,3 +6,4 @@ pub mod protocol;
 pub mod receiver;
 pub mod sender;
 pub mod session;
+pub mod transport;

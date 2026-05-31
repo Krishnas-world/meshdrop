@@ -1,12 +1,29 @@
 mod transfer;
 use std::path::Path;
+use transfer::discovery;
 use transfer::file_response_sender;
 use transfer::file_sender;
 use transfer::receiver;
 use transfer::sender;
+use transfer::transport;
 #[tauri::command]
 fn start_server(app: tauri::AppHandle) {
     receiver::start_server(app);
+}
+
+#[tauri::command]
+fn start_discovery(app: tauri::AppHandle) -> Result<String, String> {
+    discovery::start_discovery(app).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_transport_plan() -> Vec<transport::TransportOption> {
+    transport::transport_plan()
+}
+
+#[tauri::command]
+fn start_direct_connect(app: tauri::AppHandle) -> Result<Vec<transport::TransportOption>, String> {
+    transport::start_direct_connect(app).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -80,6 +97,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             start_server,
+            start_discovery,
+            get_transport_plan,
+            start_direct_connect,
             send_message,
             send_file_offer,
             get_file_info,

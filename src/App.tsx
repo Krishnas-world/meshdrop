@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ConnectionPanel } from "./components/ConnectionPanel";
 import { IncomingFileDialog } from "./components/IncomingFileDialog";
@@ -7,7 +8,7 @@ import { ProductPlan } from "./components/ProductPlan";
 import { ReceiveSettings } from "./components/ReceiveSettings";
 import { SendPanel } from "./components/SendPanel";
 import { TransferActivity } from "./components/TransferActivity";
-import type { ActivityItem, IncomingFile } from "./types";
+import type { ActivityItem, IncomingFile, NearbyDevice, TransportOption } from "./types";
 
 function parseIncomingFile(payload: string): IncomingFile | null {
   const [id, name, size] = payload.split("|");
@@ -36,6 +37,8 @@ function App() {
   const [transferStatus, setTransferStatus] = useState("Ready for nearby transfers");
   const [progress, setProgress] = useState(0);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [discoveredDevices, setDiscoveredDevices] = useState<NearbyDevice[]>([]);
+  const [transports, setTransports] = useState<TransportOption[]>([]);
   const selectedFileRef = useRef<File | null>(null);
   const selectedFilePathRef = useRef("");
   const outgoingTransferIdRef = useRef("");
@@ -47,18 +50,21 @@ function App() {
 
   const nearbyDevices = useMemo(
     () => [
+      ...discoveredDevices,
       {
-        name: "Manual LAN peer",
+        id: "manual-peer",
+        name: "Manual direct address",
         address: ip.trim() || "Enter IP",
         status: ip.trim() ? "Ready" : "Needs address",
       },
       {
-        name: "Device discovery",
-        address: "mDNS / UDP",
-        status: "Planned v0.3",
+        id: "discovery-placeholder",
+        name: "Fallback discovery",
+        address: "UDP broadcast",
+        status: discoveredDevices.length > 0 ? "Listening" : "Find devices",
       },
     ],
-    [ip],
+    [discoveredDevices, ip],
   );
 
   function addActivity(item: Omit<ActivityItem, "id" | "time">) {
@@ -73,6 +79,41 @@ function App() {
       },
       ...current,
     ]);
+  }
+
+  function upsertTransferActivity(
+    transferId: string,
+    item: Omit<ActivityItem, "id" | "time" | "transferId">,
+  ) {
+    setActivity((current) => {
+      const now = new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const existing = current.find((activityItem) => activityItem.transferId === transferId);
+
+      if (!existing) {
+        return [
+          {
+            ...item,
+            id: transferId,
+            transferId,
+            time: now,
+          },
+          ...current,
+        ];
+      }
+
+      return current.map((activityItem) =>
+        activityItem.transferId === transferId
+          ? {
+              ...activityItem,
+              ...item,
+              time: now,
+            }
+          : activityItem,
+      );
+    });
   }
 
   useEffect(() => {
@@ -95,6 +136,9 @@ function App() {
     invoke<string>("get_receive_folder")
       .then(setReceiveFolder)
       .catch((error) => console.error("Failed to load receive folder:", error));
+    invoke<TransportOption[]>("get_transport_plan")
+      .then(setTransports)
+      .catch((error) => console.error("Failed to load transport plan:", error));
 
     const unlistenMessage = listen<string>("message-received", (event) => {
       setReceivedMessage(event.payload);
@@ -102,7 +146,41 @@ function App() {
         title: "Message received",
         detail: event.payload,
         status: "done",
+        direction: "message",
       });
+    });
+
+    const unlistenDeviceDiscovered = listen<string>("device-discovered", (event) => {
+      const [id, name, address, port] = event.payload.split("|");
+
+      if (!id || !name || !address) {
+        return;
+      }
+
+      setDiscoveredDevices((current) => {
+        const device = {
+          id,
+          name,
+          address,
+          port: Number(port),
+          status: "Online",
+          lastSeen: Date.now(),
+        };
+
+        if (!current.some((item) => item.id === id)) {
+          return [device, ...current];
+        }
+
+        return current.map((item) => (item.id === id ? device : item));
+      });
+    });
+
+    const unlistenTransportStatus = listen<string>("transport-status", (event) => {
+      const route = JSON.parse(event.payload) as TransportOption;
+
+      setTransports((current) =>
+        current.map((item) => (item.id === route.id ? route : item)),
+      );
     });
 
     const unlistenFileOffer = listen<string>("incoming-file-offer", (event) => {
@@ -113,10 +191,12 @@ function App() {
 
       if (file) {
         incomingTransferIdRef.current = file.id;
-        addActivity({
+        upsertTransferActivity(file.id, {
           title: `Incoming ${file.name}`,
           detail: "Waiting for your response",
           status: "waiting",
+          progress: 10,
+          direction: "receive",
         });
       }
     });
@@ -167,19 +247,23 @@ function App() {
         setTransferStatus(`Sent ${file.name}`);
         setOutgoingTransferId("");
         outgoingTransferIdRef.current = "";
-        addActivity({
+        upsertTransferActivity(transferId, {
           title: `Sent ${file.name}`,
           detail: `${file.size.toLocaleString()} bytes to ${targetIp}`,
           status: "done",
+          progress: 100,
+          direction: "send",
         });
       } catch (error) {
         console.error("Failed to send file data:", error);
         setTransferStatus("Failed to send file data");
         setProgress(0);
-        addActivity({
+        upsertTransferActivity(transferId, {
           title: "Send failed",
           detail: file.name,
           status: "failed",
+          progress: 0,
+          direction: "send",
         });
       }
     });
@@ -193,10 +277,12 @@ function App() {
       setOutgoingTransferId("");
       outgoingTransferIdRef.current = "";
       setProgress(0);
-      addActivity({
+      upsertTransferActivity(event.payload, {
         title: "Transfer rejected",
         detail: selectedFileRef.current?.name ?? "File offer",
         status: "failed",
+        progress: 0,
+        direction: "send",
       });
     });
 
@@ -208,10 +294,12 @@ function App() {
 
       setProgress(100);
       setTransferStatus(`Saved to ${path}`);
-      addActivity({
+      upsertTransferActivity(transferId, {
         title: "File received",
         detail: path,
         status: "done",
+        progress: 100,
+        direction: "receive",
       });
       incomingTransferIdRef.current = "";
     });
@@ -224,6 +312,13 @@ function App() {
 
       setProgress(Number(percent));
       setTransferStatus(`Sending ${name}: ${Number(sent).toLocaleString()} / ${Number(total).toLocaleString()} bytes`);
+      upsertTransferActivity(transferId, {
+        title: `Sending ${name}`,
+        detail: `${Number(sent).toLocaleString()} / ${Number(total).toLocaleString()} bytes`,
+        status: "active",
+        progress: Number(percent),
+        direction: "send",
+      });
     });
 
     const unlistenReceiveProgress = listen<string>("file-receive-progress", (event) => {
@@ -234,10 +329,19 @@ function App() {
 
       setProgress(Number(percent));
       setTransferStatus(`Receiving ${name}: ${Number(received).toLocaleString()} / ${Number(total).toLocaleString()} bytes`);
+      upsertTransferActivity(transferId, {
+        title: `Receiving ${name}`,
+        detail: `${Number(received).toLocaleString()} / ${Number(total).toLocaleString()} bytes`,
+        status: "active",
+        progress: Number(percent),
+        direction: "receive",
+      });
     });
 
     return () => {
       unlistenMessage.then((fn) => fn());
+      unlistenDeviceDiscovered.then((fn) => fn());
+      unlistenTransportStatus.then((fn) => fn());
       unlistenFileOffer.then((fn) => fn());
       unlistenAccepted.then((fn) => fn());
       unlistenRejected.then((fn) => fn());
@@ -250,12 +354,62 @@ function App() {
   async function startServer() {
     try {
       await invoke("start_server");
+      await startDiscovery();
       setServerStatus("online");
       setTransferStatus("Receiver listening on port 7878");
     } catch (error) {
       console.error("Failed to start server:", error);
       setServerStatus("error");
       setTransferStatus("Could not start receiver");
+    }
+  }
+
+  async function startDiscovery() {
+    try {
+      const deviceName = await invoke<string>("start_discovery");
+      setTransferStatus(`Finding nearby devices as ${deviceName}`);
+    } catch (error) {
+      console.error("Failed to start discovery:", error);
+      setTransferStatus("Could not start fallback discovery");
+    }
+  }
+
+  async function startDirectConnect() {
+    try {
+      const plan = await invoke<TransportOption[]>("start_direct_connect");
+      setTransports(plan);
+      setTransferStatus("Direct scan started. Turn on Bluetooth/WiFi or use LAN fallback while adapters come online.");
+    } catch (error) {
+      console.error("Failed to start direct connect:", error);
+      setTransferStatus(`Could not start direct scan: ${String(error)}`);
+    }
+  }
+
+  async function openTransportAction(action: string) {
+    const urls: Record<string, string> = {
+      "bluetooth-settings": "ms-settings:bluetooth",
+      "wifi-settings": "ms-settings:network-wifi",
+      "hotspot-settings": "ms-settings:network-mobilehotspot",
+    };
+
+    if (action === "qr-pairing") {
+      setTransferStatus("QR pairing screen is next in v0.3.");
+      return;
+    }
+
+    try {
+      const url = urls[action];
+
+      if (!url) {
+        setTransferStatus("No system action is wired for this transport yet.");
+        return;
+      }
+
+      await openUrl(url);
+      setTransferStatus("Opened system settings. Turn on the required adapter, then start direct scan again.");
+    } catch (error) {
+      console.error("Failed to open transport settings:", error);
+      setTransferStatus("Could not open system settings for this adapter.");
     }
   }
 
@@ -270,6 +424,7 @@ function App() {
         title: "Message sent",
         detail: ip,
         status: "done",
+        direction: "message",
       });
     } catch (error) {
       console.error("Failed to send message:", error);
@@ -304,10 +459,12 @@ function App() {
       outgoingTransferIdRef.current = transferId;
       setProgress(15);
       setTransferStatus(`Offer sent for ${selectedFile.name}`);
-      addActivity({
+      upsertTransferActivity(transferId, {
         title: `Offer sent`,
         detail: `${selectedFile.name} to ${ip}`,
         status: "waiting",
+        progress: 15,
+        direction: "send",
       });
     } catch (error) {
       console.error("Failed to send file offer:", error);
@@ -340,6 +497,13 @@ function App() {
       setIncomingFile(null);
       setProgress(45);
       setTransferStatus("Accepted. Waiting for file data...");
+      upsertTransferActivity(incomingFile.id, {
+        title: `Receiving ${incomingFile.name}`,
+        detail: "Accepted. Waiting for sender...",
+        status: "active",
+        progress: 45,
+        direction: "receive",
+      });
     } catch (error) {
       console.error(error);
       setTransferStatus("Could not accept file. Check the receive folder path.");
@@ -361,6 +525,13 @@ function App() {
       incomingTransferIdRef.current = "";
       setProgress(0);
       setTransferStatus("File rejected");
+      upsertTransferActivity(incomingFile.id, {
+        title: `Rejected ${incomingFile.name}`,
+        detail: "Incoming transfer rejected",
+        status: "failed",
+        progress: 0,
+        direction: "receive",
+      });
     } catch (error) {
       console.error(error);
       setTransferStatus("Could not reject file");
@@ -399,9 +570,24 @@ function App() {
           <ConnectionPanel
             ip={ip}
             devices={nearbyDevices}
+            transports={transports}
             serverStatus={serverStatus}
             onIpChange={setIp}
             onStartServer={startServer}
+            onStartDiscovery={startDiscovery}
+            onStartDirectConnect={startDirectConnect}
+            onOpenTransportAction={openTransportAction}
+            onSelectDevice={(device) => {
+              if (device.id === "discovery-placeholder") {
+                startDiscovery();
+                return;
+              }
+
+              if (device.address !== "Enter IP") {
+                setIp(device.address);
+                setTransferStatus(`Selected ${device.name} at ${device.address}`);
+              }
+            }}
             onSendMessage={sendMessage}
           />
 

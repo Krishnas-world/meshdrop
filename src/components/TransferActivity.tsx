@@ -42,8 +42,18 @@ export function TransferActivity({
             <article className="activity-item" key={item.id}>
               <span className={`activity-dot activity-dot-${item.status}`} />
               <div>
-                <strong>{item.title}</strong>
+                <div className="activity-title-row">
+                  <strong>{item.title}</strong>
+                  {typeof item.progress === "number" && (
+                    <b>{item.progress}%</b>
+                  )}
+                </div>
                 <small>{item.detail}</small>
+                {typeof item.progress === "number" && item.status !== "done" && (
+                  <span className="activity-progress">
+                    <span style={{ width: `${item.progress}%` }} />
+                  </span>
+                )}
               </div>
               <time>{item.time}</time>
             </article>
