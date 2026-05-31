@@ -1,9 +1,11 @@
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
 
 static RECEIVE_FOLDER: OnceLock<Mutex<PathBuf>> = OnceLock::new();
+const CHUNK_MAGIC: &[u8; 4] = b"MDC1";
 
 fn default_receive_folder() -> PathBuf {
     std::env::var_os("USERPROFILE")
@@ -42,6 +44,19 @@ pub fn set_receive_folder(path: String) -> std::io::Result<String> {
     Ok(folder.to_string_lossy().to_string())
 }
 
+pub fn set_receive_location(path: String) -> std::io::Result<String> {
+    let location = PathBuf::from(path.trim());
+
+    if location.as_os_str().is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Receive location cannot be empty",
+        ));
+    }
+
+    set_receive_folder(location.join("MeshDrop").to_string_lossy().to_string())
+}
+
 pub fn handle_file_offer(app: &AppHandle, filename: String, filesize: u64) {
     let payload = format!("{}|{}", filename, filesize);
 
@@ -49,6 +64,10 @@ pub fn handle_file_offer(app: &AppHandle, filename: String, filesize: u64) {
 }
 
 pub fn handle_file_data(app: &AppHandle, payload: &[u8]) -> std::io::Result<PathBuf> {
+    if payload.starts_with(CHUNK_MAGIC) {
+        return handle_file_chunk(app, payload);
+    }
+
     if payload.len() < 2 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -80,6 +99,76 @@ pub fn handle_file_data(app: &AppHandle, payload: &[u8]) -> std::io::Result<Path
     fs::write(&path, &payload[data_start..])?;
 
     let _ = app.emit("file-received", path.to_string_lossy().to_string());
+
+    Ok(path)
+}
+
+fn handle_file_chunk(app: &AppHandle, payload: &[u8]) -> std::io::Result<PathBuf> {
+    if payload.len() < 4 + 2 + 8 + 8 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Chunk payload is too small",
+        ));
+    }
+
+    let filename_len = u16::from_be_bytes([payload[4], payload[5]]) as usize;
+    let total_start = 6 + filename_len;
+    let offset_start = total_start + 8;
+    let data_start = offset_start + 8;
+
+    if payload.len() < data_start {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Chunk payload is missing metadata",
+        ));
+    }
+
+    let filename = String::from_utf8_lossy(&payload[6..total_start]).to_string();
+    let safe_filename = Path::new(&filename)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("meshdrop-file");
+    let total_size = u64::from_be_bytes(
+        payload[total_start..offset_start]
+            .try_into()
+            .expect("total size slice has exact length"),
+    );
+    let offset = u64::from_be_bytes(
+        payload[offset_start..data_start]
+            .try_into()
+            .expect("offset slice has exact length"),
+    );
+    let chunk = &payload[data_start..];
+
+    let folder = receive_folder().lock().unwrap().clone();
+    fs::create_dir_all(&folder)?;
+
+    let path = folder.join(safe_filename);
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(offset == 0)
+        .open(&path)?;
+
+    file.seek(SeekFrom::Start(offset))?;
+    file.write_all(chunk)?;
+
+    let received = offset + chunk.len() as u64;
+    let percent = if total_size == 0 {
+        100
+    } else {
+        ((received as f64 / total_size as f64) * 100.0).round() as u8
+    };
+
+    let _ = app.emit(
+        "file-receive-progress",
+        format!("{}|{}|{}|{}", safe_filename, received, total_size, percent),
+    );
+
+    if received >= total_size {
+        let _ = app.emit("file-received", path.to_string_lossy().to_string());
+    }
 
     Ok(path)
 }

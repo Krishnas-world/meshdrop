@@ -28,15 +28,18 @@ function App() {
   const [receivedMessage, setReceivedMessage] = useState("");
   const [incomingFile, setIncomingFile] = useState<IncomingFile | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFilePath, setSelectedFilePath] = useState("");
   const [receiveFolder, setReceiveFolder] = useState("");
   const [serverStatus, setServerStatus] = useState<"idle" | "online" | "error">("idle");
   const [transferStatus, setTransferStatus] = useState("Ready for nearby transfers");
   const [progress, setProgress] = useState(0);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const selectedFileRef = useRef<File | null>(null);
+  const selectedFilePathRef = useRef("");
   const ipRef = useRef("");
 
-  const canSend = Boolean(ip.trim() && selectedFile);
+  const needsFilePath = Boolean(selectedFile && selectedFile.size > 25 * 1024 * 1024);
+  const canSend = Boolean(ip.trim() && selectedFile && (!needsFilePath || selectedFilePath.trim()));
 
   const nearbyDevices = useMemo(
     () => [
@@ -73,6 +76,10 @@ function App() {
   }, [selectedFile]);
 
   useEffect(() => {
+    selectedFilePathRef.current = selectedFilePath;
+  }, [selectedFilePath]);
+
+  useEffect(() => {
     ipRef.current = ip;
   }, [ip]);
 
@@ -107,6 +114,7 @@ function App() {
 
     const unlistenAccepted = listen("file-accepted", async () => {
       const file = selectedFileRef.current;
+      const filePath = selectedFilePathRef.current.trim();
       const targetIp = ipRef.current.trim();
 
       if (!file || !targetIp) {
@@ -117,16 +125,26 @@ function App() {
 
       try {
         setTransferStatus(`Sending ${file.name}`);
-        setProgress(35);
+        setProgress(20);
 
-        const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
-        setProgress(75);
+        if (filePath) {
+          await invoke("send_file_from_path", {
+            ip: targetIp,
+            path: filePath,
+          });
+        } else if (file.size <= 25 * 1024 * 1024) {
+          const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
 
-        await invoke("send_file_data", {
-          ip: targetIp,
-          filename: file.name,
-          bytes,
-        });
+          await invoke("send_file_data", {
+            ip: targetIp,
+            filename: file.name,
+            bytes,
+          });
+        } else {
+          setTransferStatus("Large files need the local file path field before sending.");
+          setProgress(0);
+          return;
+        }
 
         setProgress(100);
         setTransferStatus(`Sent ${file.name}`);
@@ -167,12 +185,26 @@ function App() {
       });
     });
 
+    const unlistenSendProgress = listen<string>("file-send-progress", (event) => {
+      const [name, sent, total, percent] = event.payload.split("|");
+      setProgress(Number(percent));
+      setTransferStatus(`Sending ${name}: ${Number(sent).toLocaleString()} / ${Number(total).toLocaleString()} bytes`);
+    });
+
+    const unlistenReceiveProgress = listen<string>("file-receive-progress", (event) => {
+      const [name, received, total, percent] = event.payload.split("|");
+      setProgress(Number(percent));
+      setTransferStatus(`Receiving ${name}: ${Number(received).toLocaleString()} / ${Number(total).toLocaleString()} bytes`);
+    });
+
     return () => {
       unlistenMessage.then((fn) => fn());
       unlistenFileOffer.then((fn) => fn());
       unlistenAccepted.then((fn) => fn());
       unlistenRejected.then((fn) => fn());
       unlistenFileReceived.then((fn) => fn());
+      unlistenSendProgress.then((fn) => fn());
+      unlistenReceiveProgress.then((fn) => fn());
     };
   }, []);
 
@@ -217,6 +249,11 @@ function App() {
       return;
     }
 
+    if (needsFilePath && !selectedFilePath.trim()) {
+      setTransferStatus("Paste the local file path before sending this large file.");
+      return;
+    }
+
     try {
       await invoke("send_file_offer", {
         ip,
@@ -237,15 +274,19 @@ function App() {
     }
   }
 
-  async function acceptFile() {
+  async function acceptFile(receiveLocation?: string) {
     if (!incomingFile) {
       return;
     }
 
     try {
-      const savedFolder = await invoke<string>("set_receive_folder", {
-        path: receiveFolder,
-      });
+      const savedFolder = receiveLocation
+        ? await invoke<string>("set_receive_location", {
+            path: receiveLocation,
+          })
+        : await invoke<string>("set_receive_folder", {
+            path: receiveFolder,
+          });
 
       setReceiveFolder(savedFolder);
 
@@ -277,6 +318,20 @@ function App() {
     }
   }
 
+  async function chooseReceiveLocation(path: string) {
+    try {
+      const folder = await invoke<string>("set_receive_location", {
+        path,
+      });
+
+      setReceiveFolder(folder);
+      setTransferStatus(`Receive folder set to ${folder}`);
+    } catch (error) {
+      console.error(error);
+      setTransferStatus("Could not set receive location");
+    }
+  }
+
   return (
     <main className="app-shell">
       <section className="workspace">
@@ -303,8 +358,14 @@ function App() {
 
           <SendPanel
             selectedFile={selectedFile}
+            selectedFilePath={selectedFilePath}
+            needsFilePath={needsFilePath}
             canSend={canSend}
-            onFileChange={setSelectedFile}
+            onFileChange={(file) => {
+              setSelectedFile(file);
+              setSelectedFilePath((file as (File & { path?: string }) | null)?.path ?? "");
+            }}
+            onFilePathChange={setSelectedFilePath}
             onSendOffer={sendFileOffer}
           />
 
@@ -317,7 +378,7 @@ function App() {
 
           <ReceiveSettings
             receiveFolder={receiveFolder}
-            onReceiveFolderChange={setReceiveFolder}
+            onChooseReceiveLocation={chooseReceiveLocation}
           />
         </div>
       </section>

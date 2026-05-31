@@ -1,28 +1,46 @@
+import { open } from "@tauri-apps/plugin-dialog";
+
 type ReceiveSettingsProps = {
   receiveFolder: string;
-  onReceiveFolderChange: (folder: string) => void;
+  onChooseReceiveLocation: (location: string) => void;
 };
 
-export function ReceiveSettings({ receiveFolder, onReceiveFolderChange }: ReceiveSettingsProps) {
+export function ReceiveSettings({
+  receiveFolder,
+  onChooseReceiveLocation,
+}: ReceiveSettingsProps) {
+  async function chooseLocation() {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "Choose where MeshDrop should save received files",
+    });
+
+    if (typeof selected === "string") {
+      onChooseReceiveLocation(selected);
+    }
+  }
+
   return (
     <section className="panel settings-panel">
-      <div>
-        <p className="eyebrow">Storage</p>
-        <h2>Receive folder</h2>
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">Storage</p>
+          <h2>Receive location</h2>
+        </div>
+        <button className="ghost-button" onClick={chooseLocation}>
+          Choose location
+        </button>
       </div>
 
-      <label className="field">
-        <span>Save incoming files to</span>
-        <input
-          type="text"
-          value={receiveFolder}
-          onChange={(event) => onReceiveFolderChange(event.target.value)}
-        />
-      </label>
+      <div className="folder-preview">
+        <span>MeshDrop folder</span>
+        <strong>{receiveFolder}</strong>
+      </div>
 
       <div className="settings-note">
         <strong>Current V1 behavior</strong>
-        <p>The folder is created on accept, then incoming file bytes are saved there.</p>
+        <p>Pick any location. MeshDrop creates and uses its own MeshDrop folder inside it.</p>
       </div>
     </section>
   );

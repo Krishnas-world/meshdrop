@@ -283,6 +283,24 @@ h3 {
   color: #607068;
 }
 
+.path-warning {
+  margin: 10px 0 0;
+  color: #9a5b18;
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.selected-path {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #eef4f0;
+  color: #536158;
+  font-size: 0.84rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -393,6 +411,28 @@ h3 {
   background: #eef4f0;
 }
 
+.folder-preview {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid rgba(23, 32, 27, 0.1);
+  border-radius: 8px;
+  background: #f7f8f5;
+}
+
+.folder-preview span {
+  color: #607068;
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.folder-preview strong {
+  color: #17201b;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
 .settings-note p {
   margin: 4px 0 0;
   color: #536158;
@@ -457,10 +497,23 @@ h3 {
 }
 
 .dialog-folder {
+  display: grid;
+  gap: 5px;
   padding: 10px;
   border-radius: 8px;
   background: #f4f6f3;
+}
+
+.dialog-folder span {
   color: #536158;
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.dialog-folder strong {
+  color: #17201b;
+  font-size: 0.9rem;
   overflow-wrap: anywhere;
 }
 
